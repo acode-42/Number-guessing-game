@@ -2,6 +2,9 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <unordered_map>
+#include <algorithm>
+#include <ctime>
 
 using namespace std;
 
@@ -13,6 +16,7 @@ struct Candidate {
 struct Voter {
     string name;
     string voterID;
+    bool hasVoted;
 };
 
 void loadCandidates(vector<Candidate>& candidates) {
@@ -34,6 +38,7 @@ void loadVoters(vector<Voter>& voters) {
     if (file.is_open()) {
         Voter voter;
         while (file >> voter.name >> voter.voterID) {
+            voter.hasVoted = false; // Initialize voting status to false
             voters.push_back(voter);
         }
         file.close();
@@ -53,7 +58,7 @@ void saveCandidates(const vector<Candidate>& candidates) {
 void saveVoters(const vector<Voter>& voters) {
     ofstream file("voters.txt");
     for (const auto& voter : voters) {
-        file << voter.name << " " << voter.voterID << endl;
+        file << voter.name << " " << voter.voterID << " " << voter.hasVoted << endl;
     }
     file.close();
 }
@@ -87,14 +92,26 @@ void inputVoters(vector<Voter>& voters) {
         getline(cin, voter.name);
         cout << "Enter the voter ID of voter " << i + 1 << ": ";
         getline(cin, voter.voterID);
+        voter.hasVoted = false; // Initialize voting status to false
         voters.push_back(voter);
     }
 
     saveVoters(voters); // Save voters to file
 }
 
-void castVote(vector<Candidate>& candidates, const vector<Voter>& voters) {
+bool isVoterEligible(const string& voterID, const vector<Voter>& voters) {
     for (const auto& voter : voters) {
+        if (voter.voterID == voterID) {
+            return !voter.hasVoted; // Check if the voter has not voted yet
+        }
+    }
+    return false; // Voter ID not found or already voted
+}
+
+void castVote(vector<Candidate>& candidates, vector<Voter>& voters) {
+    for (auto& voter : voters) {
+        if (voter.hasVoted) continue; // Skip if already voted
+
         cout << "Voter: " << voter.name << " (ID: " << voter.voterID << ")\n";
         cout << "Candidates:\n";
         for (size_t i = 0; i < candidates.size(); ++i) {
@@ -104,26 +121,96 @@ void castVote(vector<Candidate>& candidates, const vector<Voter>& voters) {
         int choice;
         cout << "Enter the candidate number you want to vote for: ";
         cin >> choice;
+
+        // Validate choice
         if (choice > 0 && choice <= candidates.size()) {
             candidates[choice - 1].votes++;
+            voter.hasVoted = true; // Mark voter as having voted
+            cout << "Vote cast successfully!\n";
         } else {
-            cout << "Invalid choice.\n";
+            cout << "Invalid choice. Please try again.\n";
         }
     }
+
+    saveVoters(voters); // Save updated voter information
 }
 
-void determineWinner(const vector<Candidate>& candidates) {
+void determineWinner(const vector<Candidate>& candidates, vector<Voter>& voters) {
     int maxVotes = -1;
-    string winner;
+    vector<Candidate> tiedCandidates;
 
+    // Find the maximum votes and the candidates with those votes
     for (const auto& candidate : candidates) {
         if (candidate.votes > maxVotes) {
             maxVotes = candidate.votes;
-            winner = candidate.name;
+            tiedCandidates.clear();
+            tiedCandidates.push_back(candidate);
+        } else if (candidate.votes == maxVotes) {
+            tiedCandidates.push_back(candidate);
         }
     }
 
-    cout << "The winner is: " << winner << " with " << maxVotes << " votes.\n";
+    // If there are ties, conduct a tiebreaker
+    if (tiedCandidates.size() > 1) {
+        cout << "It's a tie between the following candidates:\n";
+        for (const auto& candidate : tiedCandidates) {
+            cout << candidate.name << " with " << maxVotes << " votes.\n";
+        }
+
+        cout << "Conducting a tiebreaker voting...\n";
+        vector<Candidate> tiebreakers = tiedCandidates; // Copy tied candidates for tiebreaker
+        for (const auto& voter : voters) {
+            cout << "Voter: " << voter.name << " (ID: " << voter.voterID << ")\n";
+            cout << "Tied Candidates:\n";
+            for (size_t i = 0; i < tiebreakers.size(); ++i) {
+                cout << i + 1 << ". " << tiebreakers[i].name << "\n";
+            }
+
+            int choice;
+            cout << "Enter the candidate number you want to vote for: ";
+            cin >> choice;
+            if (choice > 0 && choice <= tiebreakers.size()) {
+                tiebreakers[choice - 1].votes++; // Increment votes for the selected tiebreaker candidate
+            } else {
+                cout << "Invalid choice.\n";
+            }
+        }
+
+        // Determine the final winner from the tiebreaker
+        maxVotes = -1;
+        string finalWinner;
+
+        for (const auto& candidate : tiebreakers) {
+            if (candidate.votes > maxVotes) {
+                maxVotes = candidate.votes;
+                finalWinner = candidate.name;
+            } else if (candidate.votes == maxVotes) {
+                // Introduce random selection for persistent ties
+                if (rand() % 2 == 0) { // Randomly choose between tied candidates
+                    finalWinner = candidate.name;
+                }
+            }
+        }
+
+        cout << "The winner after the tiebreaker is: " << finalWinner << " with " << maxVotes << " votes.\n";
+    } else {
+        cout << "The winner is: " << tiedCandidates[0].name << " with " << maxVotes << " votes.\n";
+    }
+
+    // Display detailed results
+    cout << "\nVoting Results:\n";
+    for (const auto& candidate : candidates) {
+        cout << candidate.name << ": " << candidate.votes << " votes\n";
+    }
+}
+
+void displayMenu() {
+    cout << "Menu:\n";
+    cout << "1. Add Candidates\n";
+    cout << "2. Add Voters\n";
+    cout << "3. Cast Votes\n";
+    cout << "4. Determine Winner\n";
+    cout << "5. Exit\n";
 }
 
 int main() {
@@ -134,19 +221,35 @@ int main() {
     loadCandidates(candidates);
     loadVoters(voters);
 
-    // Input candidates if none are loaded
-    if (candidates.empty()) {
-        inputCandidates(candidates);
-    }
+    srand(static_cast<unsigned int>(time(0))); // Seed random number generator
 
-    // Input voters if none are loaded
-    if (voters.empty()) {
-        inputVoters(voters);
-    }
+    while (true) {
+        displayMenu();
+        int choice;
+        cout << "Choose an option: ";
+        cin >> choice;
 
-    // Cast votes and determine the winner
-    castVote(candidates, voters);
-    determineWinner(candidates);
+        switch (choice) {
+            case 1:
+                inputCandidates(candidates);
+                break;
+            case 2:
+                inputVoters(voters);
+                break;
+            case 3:
+                castVote(candidates, voters);
+                break;
+            case 4:
+                determineWinner(candidates, voters);
+                break;
+            case 5:
+                cout << "Exiting the program.\n";
+                return 0;
+            default:
+                cout << "Invalid option. Please try again.\n";
+                break;
+        }
+    }
 
     return 0;
 }
